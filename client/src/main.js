@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { keys } from './Input.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // --- 1. Core Setup ---
 const canvasContainer = document.getElementById('game-container');
 const scene = new THREE.Scene();
@@ -38,16 +39,38 @@ const sunLight = new THREE.PointLight(0xffaa00, 2, 300);
 sunLight.position.set(0, 0, 0);
 scene.add(sunLight);
 
-// --- 5. Placeholders (To see it working) ---
-// A grid makes it infinitely easier to visualize the X/Z movement plane
-const gridHelper = new THREE.GridHelper(100, 20, 0x00ffff, 0x444444);
-scene.add(gridHelper);
+// --- 5. The Player Object ---
+const playerGroup = new THREE.Group();
+scene.add(playerGroup);
 
-// A placeholder for your plane model
-const geometry = new THREE.BoxGeometry(4, 2, 4);
-const material = new THREE.MeshStandardMaterial({ color: 0x00ffaa });
-const playerPlaceholder = new THREE.Mesh(geometry, material);
-scene.add(playerPlaceholder);
+// Initialize the loader
+const loader = new GLTFLoader();
+
+// Load the 3D model from the public folder
+// Load the 3D model from the public folder
+loader.load(
+  '/assets/ship.glb', 
+  (gltf) => {
+    const shipModel = gltf.scene;
+    // --- NEW: Paint every part of the ship white ---
+    shipModel.traverse((child) => {
+      if (child.isMesh) {
+        // Change the existing material's color to pure white (Hex: 0xffffff)
+        child.material.color.setHex(0xffffff);
+      }
+    });
+    
+    // Scale the model down if it's too huge. Adjust these numbers as needed!
+    shipModel.scale.set(1, 1, 1); 
+
+    playerGroup.add(shipModel);
+    console.log("Model loaded and painted white!");
+  },
+  undefined,
+  (error) => {
+    console.error('Error loading the model. Check the file path!', error);
+  }
+);
 
 // --- 6. Responsive Resize ---
 // Keeps the game from distorting if the user resizes the browser window
@@ -62,39 +85,34 @@ window.addEventListener('resize', () => {
 });
 
 // --- 7. The Game Loop ---
-// --- 7. The Game Loop ---
-const speed = 0.3;      // How fast the plane moves forward
-const turnSpeed = 0.05; // How fast the plane rotates
+const speed = 0.3;      
+const turnSpeed = 0.05; 
 
 function animate() {
   requestAnimationFrame(animate);
 
-  // 1. Handle Rotation (A and D keys)
+  // 1. Handle Rotation
   if (keys.a) {
-    playerPlaceholder.rotation.y += turnSpeed;
+    playerGroup.rotation.y += turnSpeed;
   }
   if (keys.d) {
-    playerPlaceholder.rotation.y -= turnSpeed;
+    playerGroup.rotation.y -= turnSpeed;
   }
 
-  // 2. Handle Forward Movement (W key)
-  // We use Sine and Cosine to calculate the X and Z velocity based on where the box is pointing
+  // 2. Handle Forward Movement
   if (keys.w) {
-    playerPlaceholder.position.x += Math.sin(playerPlaceholder.rotation.y) * speed;
-    playerPlaceholder.position.z += Math.cos(playerPlaceholder.rotation.y) * speed;
+    playerGroup.position.x += Math.sin(playerGroup.rotation.y) * speed;
+    playerGroup.position.z += Math.cos(playerGroup.rotation.y) * speed;
   }
 
-  // 3. Handle Reverse (S key)
+  // 3. Handle Reverse
   if (keys.s) {
-    playerPlaceholder.position.x -= Math.sin(playerPlaceholder.rotation.y) * speed;
-    playerPlaceholder.position.z -= Math.cos(playerPlaceholder.rotation.y) * speed;
+    playerGroup.position.x -= Math.sin(playerGroup.rotation.y) * speed;
+    playerGroup.position.z -= Math.cos(playerGroup.rotation.y) * speed;
   }
 
-  // Render the scene
   renderer.render(scene, camera);
 }
 
-// Start the engine
-animate();
 // Start the engine
 animate();
