@@ -14,7 +14,7 @@ canvasContainer.appendChild(renderer.domElement);
 // --- 3. The Isometric Camera ---
 // Using Orthographic to remove depth distortion. 
 const aspect = window.innerWidth / window.innerHeight;
-const frustumSize = 50; // Controls "zoom". Higher number = see more of the map.
+const frustumSize = 115; // Controls "zoom". Higher number = see more of the map.
 
 const camera = new THREE.OrthographicCamera(
   (frustumSize * aspect) / -2, // left
@@ -38,6 +38,22 @@ scene.add(ambientLight);
 const sunLight = new THREE.PointLight(0xffaa00, 2, 300);
 sunLight.position.set(0, 0, 0);
 scene.add(sunLight);
+// --- The World Boundary ---
+const WORLD_RADIUS = 100; // How big your solar system arena is
+
+// Create a glowing red ring to show the edge
+const boundaryGeometry = new THREE.RingGeometry(WORLD_RADIUS - 1, WORLD_RADIUS, 64);
+const boundaryMaterial = new THREE.MeshBasicMaterial({ 
+  color: 0xff0000, 
+  side: THREE.DoubleSide, 
+  transparent: true, 
+  opacity: 0.5 
+});
+const boundaryMesh = new THREE.Mesh(boundaryGeometry, boundaryMaterial);
+
+// Lay the ring flat on the XZ floor
+boundaryMesh.rotation.x = Math.PI / 2; 
+scene.add(boundaryMesh);
 
 // --- 5. The Player Object ---
 const playerGroup = new THREE.Group();
@@ -92,12 +108,8 @@ function animate() {
   requestAnimationFrame(animate);
 
   // 1. Handle Rotation
-  if (keys.a) {
-    playerGroup.rotation.y += turnSpeed;
-  }
-  if (keys.d) {
-    playerGroup.rotation.y -= turnSpeed;
-  }
+  if (keys.a) playerGroup.rotation.y += turnSpeed;
+  if (keys.d) playerGroup.rotation.y -= turnSpeed;
 
   // 2. Handle Forward Movement
   if (keys.w) {
@@ -109,6 +121,19 @@ function animate() {
   if (keys.s) {
     playerGroup.position.x -= Math.sin(playerGroup.rotation.y) * speed;
     playerGroup.position.z -= Math.cos(playerGroup.rotation.y) * speed;
+  }
+
+  // --- NEW: The Boundary Math ---
+  const distFromCenter = Math.sqrt(playerGroup.position.x ** 2 + playerGroup.position.z ** 2);
+  
+  // If the plane is outside the circle, push it exactly to the edge
+  if (distFromCenter > WORLD_RADIUS) {
+    // Math.atan2 helps us find the exact angle from the center to the player
+    const angle = Math.atan2(playerGroup.position.x, playerGroup.position.z);
+    
+    // Snap their position back to the maximum radius
+    playerGroup.position.x = Math.sin(angle) * WORLD_RADIUS;
+    playerGroup.position.z = Math.cos(angle) * WORLD_RADIUS;
   }
 
   renderer.render(scene, camera);
