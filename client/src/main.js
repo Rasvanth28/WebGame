@@ -77,7 +77,7 @@ loader.load(
     });
     
     // Scale the model down if it's too huge. Adjust these numbers as needed!
-    shipModel.scale.set(1, 1, 1); 
+    shipModel.scale.set(0.8, 0.8, 0.8); 
 
     playerGroup.add(shipModel);
     console.log("Model loaded and painted white!");
