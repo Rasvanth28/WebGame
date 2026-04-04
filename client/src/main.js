@@ -3,7 +3,7 @@ import { keys } from './Input.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { World } from './World.js';
 import { MiniMap } from './MiniMap.js';
-
+import { socket, serverState } from './Network.js';
 // Post-processing imports
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
@@ -56,6 +56,9 @@ const playerGroup = new THREE.Group();
 playerGroup.position.set(0, 0, 160); // Spawn safely outside the enlarged Sun
 scene.add(playerGroup);
 
+const enemyPlanes = {}; 
+// We will clone your ship model for the enemies
+let enemyModelTemplate = null;
 // --- 6. The Tactical Mini-Map ---
 const miniMap = new MiniMap('mini-map-canvas', world, playerGroup);
 
@@ -64,9 +67,7 @@ const loader = new GLTFLoader();
 const thrusters = [];
 
 // Load the 3D model from the public folder
-loader.load(
-  '/assets/ship.glb',
-  (gltf) => {
+loader.load('/assets/ship.glb',(gltf) => {
     const shipModel = gltf.scene;
 
     shipModel.traverse((child) => {
@@ -75,12 +76,12 @@ loader.load(
         child.material.color.setHex(0xffffff);
       }
     });
-    
     // Scale the model down if it's too huge. Adjust these numbers as needed!
     shipModel.scale.set(1, 1, 1); 
 
     playerGroup.add(shipModel);
     console.log("Model loaded with realistic PBR and Thrusters!");
+    enemyModelTemplate = shipModel;
   },
   undefined,
   (error) => {
@@ -169,7 +170,53 @@ function animate() {
     playerGroup.position.z = Math.cos(angle) * world.WORLD_RADIUS;
     velocity *= 0.5; // Bounce off the wall
   }
+// ... [Your Boundary Math] ...
+  
+  // --- NEW: Tell the server where we calculated we should be ---
+  if (socket.connected) {
+    socket.emit('playerMoved', {
+      x: playerGroup.position.x,
+      z: playerGroup.position.z,
+      rotation: playerGroup.rotation.y
+    });
+  }
+  // --- NEW: Sync Enemy Planes ---
+  if (enemyModelTemplate && serverState.players) {
+    // Loop through all players the server knows about
+    for (const id in serverState.players) {
+      // Ignore ourselves!
+      if (id === socket.id) continue;
 
+      const serverPlayerData = serverState.players[id];
+
+      // If this enemy doesn't exist on our screen yet, create them!
+      if (!enemyPlanes[id]) {
+        const newEnemy = new THREE.Group();
+        newEnemy.add(enemyModelTemplate.clone()); // Clone the 3D model
+        scene.add(newEnemy);
+        enemyPlanes[id] = newEnemy;
+      }
+
+      // Snap the enemy plane to the server's coordinates
+      enemyPlanes[id].position.x = serverPlayerData.x;
+      enemyPlanes[id].position.z = serverPlayerData.z;
+      
+      // We use lerp (Linear Interpolation) for rotation so it looks smooth, not snappy
+      enemyPlanes[id].rotation.y = THREE.MathUtils.lerp(
+        enemyPlanes[id].rotation.y, 
+        serverPlayerData.rotation, 
+        0.2
+      );
+    }
+
+    // Cleanup: Remove planes that disconnected
+    for (const id in enemyPlanes) {
+      if (!serverState.players[id]) {
+        scene.remove(enemyPlanes[id]);
+        delete enemyPlanes[id];
+      }
+    }
+  }
   composer.render();
   miniMap.draw();
 }
