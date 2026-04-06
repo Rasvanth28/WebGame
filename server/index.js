@@ -174,6 +174,30 @@ io.on('connection', (socket) => {
         pilot.x  = spawn.x;
         pilot.z  = spawn.z;
         pilot.hp = 100;
+      } else {
+        // Validate restored position — push out if inside sun or a planet
+        const distFromSun = Math.sqrt(pilot.x ** 2 + pilot.z ** 2);
+        if (distFromSun < SUN_RADIUS + 60) {
+          console.log(`  -> Saved position inside sun danger zone — relocating`);
+          const spawn = getRandomSafeSpawn(token);
+          pilot.x = spawn.x;
+          pilot.z = spawn.z;
+        } else {
+          // Also check planets
+          for (const name in gameState.planets) {
+            const planet = gameState.planets[name];
+            const px = Math.cos(planet.angle) * planet.radius;
+            const pz = -Math.sin(planet.angle) * planet.radius;
+            const d  = Math.sqrt((pilot.x - px) ** 2 + (pilot.z - pz) ** 2);
+            if (d < planet.size + 15) {
+              console.log(`  -> Saved position inside planet ${name} — relocating`);
+              const spawn = getRandomSafeSpawn(token);
+              pilot.x = spawn.x;
+              pilot.z = spawn.z;
+              break;
+            }
+          }
+        }
       }
     } else {
       console.log(`  -> Creating new pilot: ${token}`);
@@ -189,8 +213,9 @@ io.on('connection', (socket) => {
       playerRegistry[token] = pilot;
     }
 
-    // --- Step 5: Lock movement briefly to prevent desync on reconnect ---
-    pilot.ignoreMovementUntil = Date.now() + 600;
+    // --- Step 5: Lock movement AND env-damage briefly to prevent desync/damage on reconnect ---
+    const SPAWN_GRACE = 2000; // 2 seconds immunity after spawn/reconnect
+    pilot.ignoreMovementUntil = Date.now() + SPAWN_GRACE;
 
     // --- Step 6: Add to ACTIVE game state ---
     // Use the pilot object directly so position updates are shared without the
@@ -239,10 +264,16 @@ io.on('connection', (socket) => {
     player.lastShot = Date.now();
   });
 
-  // Environmental damage — amount is IGNORED; always apply 20 to prevent exploit
+  // Environmental damage — blocked during spawn-grace period
   socket.on('takeDamage', () => {
     const player = gameState.players[socket.id];
     if (!player) return;
+
+    // Ignore env damage during the spawn-grace window (same timestamp as movement lock)
+    if (player.ignoreMovementUntil && Date.now() < player.ignoreMovementUntil) {
+      console.log(`[~] Env damage ignored — spawn grace active for ${socket.id}`);
+      return;
+    }
 
     const ENV_DAMAGE = 20;
     player.hp -= ENV_DAMAGE;
@@ -352,14 +383,40 @@ setInterval(() => {
       }
     }
 
-    // Players
+    // Players — swept segment collision to prevent bullets tunnelling through targets
+    // Each tick the bullet travels BULLET_SPEED units. We test the ENTIRE travelled
+    // segment (prevX,prevZ) → (p.x,p.z) against each player's hitbox so fast
+    // bullets can never skip past a ship between frames.
     if (!hit) {
+      // Rewind to find where the bullet was at the START of this tick
+      const prevX = p.x - Math.sin(p.rotation) * BULLET_SPEED;
+      const prevZ = p.z - Math.cos(p.rotation) * BULLET_SPEED;
+
+      // Segment direction and squared length
+      const segDx = p.x - prevX;   // = sin(rotation) * BULLET_SPEED
+      const segDz = p.z - prevZ;   // = cos(rotation) * BULLET_SPEED
+      const segLenSq = segDx * segDx + segDz * segDz; // BULLET_SPEED²
+
       for (const pid in gameState.players) {
         if (pid === p.ownerId) continue;
         const pl = gameState.players[pid];
-        if (Math.sqrt((p.x - pl.x) ** 2 + (p.z - pl.z) ** 2) < HITBOX_RADIUS) {
+
+        // Project player position onto the segment, clamp to [0,1]
+        const toDx = pl.x - prevX;
+        const toDz = pl.z - prevZ;
+        const t = Math.max(0, Math.min(1, (toDx * segDx + toDz * segDz) / segLenSq));
+
+        // Closest point on segment to the player
+        const closestX = prevX + t * segDx;
+        const closestZ = prevZ + t * segDz;
+
+        // Squared distance from closest point to player centre
+        const distSq = (closestX - pl.x) ** 2 + (closestZ - pl.z) ** 2;
+
+        if (distSq < HITBOX_RADIUS * HITBOX_RADIUS) {
           pl.hp -= 10;
-          pl.lastShot = Date.now();
+          // NOTE: do NOT set pl.lastShot here — that field controls fire-rate limiting
+          //       and contaminating it would prevent the target from firing back.
           hit = true;
           console.log(`[!] ${p.ownerId} hit ${pid}! HP: ${pl.hp}`);
           if (pl.hp <= 0) handlePlayerDeath(pid, p.ownerId);
