@@ -6,6 +6,12 @@ const cors = require('cors');
 // 1. Setup Express and HTTP Server
 const app = express();
 app.use(cors());
+
+// Add a root route for Render's health check
+app.get('/', (req, res) => {
+  res.send('Space Combat Server is online!');
+});
+
 const server = http.createServer(app);
 
 // 2. Setup Socket.io
@@ -246,22 +252,35 @@ io.on('connection', (socket) => {
     player.rotation = data.rotation;
   });
 
-  // Fire event
-  const SERVER_FIRE_COOLDOWN = 150; // ms — slightly under client 180ms to allow for jitter
-  socket.on('fire', (data) => {
+  // Fire event — uses SERVER-AUTHORITATIVE position for the spawn point
+  const SERVER_FIRE_COOLDOWN = 150; // ms
+  socket.on('fire', () => {
     const player = gameState.players[socket.id];
     if (!player) return;
     if (Date.now() - (player.lastShot || 0) < SERVER_FIRE_COOLDOWN) return;
 
-    gameState.projectiles.push({
-      id: Math.random().toString(36).substring(7),
-      ownerId: socket.id,
-      x: data.x,
-      z: data.z,
-      rotation: data.rotation,
-      distanceTraveled: 0
-    });
-    player.lastShot = Date.now();
+    // Safety: ensure player rotation and position are valid numbers
+    const rot = (typeof player.rotation === 'number' && isFinite(player.rotation)) ? player.rotation : 0;
+    const px  = (typeof player.x === 'number' && isFinite(player.x)) ? player.x : 0;
+    const pz  = (typeof player.z === 'number' && isFinite(player.z)) ? player.z : 0;
+
+    // Spawn 10 units in front of the ship's current server-side orientation
+    const SPAWN_OFFSET = 10;
+    const bulletX = px + Math.sin(rot) * SPAWN_OFFSET;
+    const bulletZ = pz + Math.cos(rot) * SPAWN_OFFSET;
+
+    // Final safety check: if everything is still a number, add the projectile
+    if (isFinite(bulletX) && isFinite(bulletZ)) {
+      gameState.projectiles.push({
+        id: Math.random().toString(36).substring(7),
+        ownerId: socket.id,
+        x: bulletX,
+        z: bulletZ,
+        rotation: rot,
+        distanceTraveled: 0
+      });
+      player.lastShot = Date.now();
+    }
   });
 
   // Environmental damage — blocked during spawn-grace period
@@ -343,7 +362,7 @@ function handlePlayerDeath(pid, killerId = null) {
 // --- Physics Constants ---
 // BULLET_SPEED must exceed the client's MAX_BASE_SPEED (5.0) by a wide margin so bullets
 // always travel forward away from the firing ship, never appear to run alongside it.
-const BULLET_SPEED        = 18.0;
+const BULLET_SPEED        = 35.0;
 const BULLET_MAX_DISTANCE = 2000; // increased to compensate for faster travel
 const HITBOX_RADIUS       = 5.0;
 
